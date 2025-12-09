@@ -21,6 +21,11 @@ except KeyError:
         VALID_USERNAME = ""
         VALID_PASSWORD = ""
 
+def logout():
+    """Función para cerrar sesión: restablece el estado de login y recarga."""
+    st.session_state["password_correct"] = False
+    st.rerun()
+
 def check_password():
     """Muestra el formulario de login y verifica las credenciales."""
     
@@ -75,14 +80,7 @@ COLUMNAS_MAPEO = {
     'Numero de operación': ID_COL 
 }
 
-# (Las funciones auxiliares: get_columnas_finales, formatear_reporte_id, formatear_reporte_fecha, formatear_reporte_pendientes, 
-# cargar_datos, conciliar, y to_excel_with_summary deben estar aquí completas. 
-# Por razones de brevedad en el envío, asumimos que están copiadas del código anterior, 
-# ya que solo se modifican las partes visibles de Streamlit).
-
-# *** START: Funciones de Procesamiento (copiadas del código anterior) ***
-# (Las insertamos para que el código sea completo y funcional)
-# ...
+# --- Funciones Auxiliares de Procesamiento (sin cambios) ---
 
 def get_columnas_finales():
     return ['Estado', 'Fecha', 'Monto_C', 'Monto_B', 'Concepto_C', 'Concepto_B', f'{ID_COL}_C', f'{ID_COL}_B']
@@ -370,10 +368,21 @@ def to_excel_with_summary(df):
 # --- ESTRUCTURA PRINCIPAL DE LA APLICACIÓN STREAMLIT (Frontend Mejorado) ---
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 
-# ⚠️ Asegúrate de que el login haya pasado antes de esta línea
-# (Ya está cubierto por el if not check_password(): st.stop() al inicio)
+# CONFIGURACIÓN DE PÁGINA ANTES DEL LOGIN
+st.set_page_config(page_title="Conciliación Bancaria Avanzada", layout="centered")
+
+# VERIFICACIÓN DE ACCESO
+if not check_password():
+    st.stop() 
+
+# ⚠️ BOTÓN DE CERRAR SESIÓN (Añadido)
+with st.sidebar:
+    st.markdown("### Opciones de Usuario")
+    st.button("🚪 Cerrar Sesión", on_click=logout, type="secondary", use_container_width=True)
+    st.markdown("---")
 
 
+# CÓDIGO DE LA APLICACIÓN (SOLO VISIBLE DESPUÉS DEL LOGIN)
 # Título y Diseño Principal
 st.title("Sistema de Conciliación Bancaria Avanzada 🏦")
 st.markdown("Herramienta automatizada para la conciliación de movimientos Bancarios y Contables.")
