@@ -180,7 +180,7 @@ def cargar_datos(uploaded_file, origen):
     return df[['Fecha', 'Monto', 'Abs_Monto', 'Concepto', ID_COL, 'ID_Original', 'Origen']]
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------
-# --- FUNCIÓN CENTRAL DE CONCILIACIÓN (REVERTIDA A 3 PASOS) ---
+# --- FUNCIÓN CENTRAL DE CONCILIACIÓN (3 PASOS) ---
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 
 @st.cache_data
@@ -279,7 +279,7 @@ def conciliar(df_contable, df_bancario):
         df_reporte_tolerancia = pd.DataFrame(conciliados_tolerancia_list, columns=columnas_finales)
 
     
-    # CONSOLIDACIÓN DE LOS PENDIENTES FINALES (Sin el Paso 4)
+    # CONSOLIDACIÓN DE LOS PENDIENTES FINALES
     df_c_final = df_c[df_c['Conciliado'] == False].copy()
     df_b_final = df_b[df_b['Conciliado'] == False].copy()
 
@@ -297,7 +297,7 @@ def conciliar(df_contable, df_bancario):
     return df_reporte.sort_values(by='Fecha').reset_index(drop=True)
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------
-# --- FUNCIÓN DE EXCEL CON MODIFICACIÓN EN RESUMEN CONCEPTOS ---
+# --- FUNCIÓN DE EXCEL CON COLUMNA "CONTROL" Y FORMATO CONDICIONAL ---
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 
 @st.cache_data
@@ -313,6 +313,9 @@ def to_excel_with_summary(df):
     color_tolerancia = workbook.add_format({'bg_color': '#B7DDF8', 'font_color': '#0B5394'})
     color_contable = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
     color_banco = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+    
+    # NUEVO COLOR PARA POSIBLE COINCIDENCIA (Violeta/Rosa Claro)
+    color_posible = workbook.add_format({'bg_color': '#E0BBE4', 'font_color': '#5D0970'})
     
     formato_numero = workbook.add_format({'num_format': '#,##0.00'}) 
     formato_encabezado_resumen = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#D9D9D9', 'border': 1})
@@ -348,13 +351,13 @@ def to_excel_with_summary(df):
     worksheet.set_column('A:A', 35); worksheet.set_column('B:B', 15); worksheet.set_column('E:H', 25) 
     
     
-    # 2. HOJA 2: RESUMEN POR CONCEPTO (CON INDICADOR DE POSIBLE COINCIDENCIA)
+    # 2. HOJA 2: RESUMEN POR CONCEPTO (CON COLUMNA "CONTROL")
     df_pendientes = df[df['Estado'].str.contains('Pendiente - Solo en')]
     
     if not df_pendientes.empty:
         df_resumen = df_pendientes[['Estado', 'Concepto_C', 'Concepto_B', 'Monto_C', 'Monto_B']].copy()
         df_resumen['Concepto Final'] = df_resumen['Concepto_C'].fillna(df_resumen['Concepto_B'])
-        df_resumen['Monto'] = df_resumen['Monto_C'].fillna(df_resumen['Monto_B'])
+        df_resumen['Monto'] = df_resumen['Monto_C'].fillna(df_resumen['Monto_B']).abs() # Usamos valor absoluto para las sumas
         
         # Agrupar y calcular la suma total por estado y concepto
         df_agrupado = df_resumen.groupby(['Estado', 'Concepto Final'])['Monto'].sum().reset_index()
@@ -372,32 +375,42 @@ def to_excel_with_summary(df):
             how='inner'
         )['Monto Total Agrupado'].unique()
         
-        # Marcar las filas en df_agrupado que tienen un monto coincidente
-        df_agrupado['Nota'] = ''
+        # Crear la columna de control, llenando con "Posible Coincidencia" si el monto suma coincide
+        df_agrupado['Control'] = ''
         df_agrupado.loc[
             df_agrupado['Monto Total Agrupado'].isin(matching_sums),
-            'Nota'
-        ] = '<< Posible Coincidencia'
-        
-        # Formatear la columna de Monto para incluir el indicador y mantener la columna numérica para el formato Excel
-        df_agrupado['Monto Final'] = df_agrupado['Monto Total Agrupado']
-        df_agrupado['Monto Total Agrupado'] = df_agrupado['Monto Total Agrupado'].apply(lambda x: f"{x:,.2f} {df_agrupado.loc[df_agrupado['Monto Final'] == x, 'Nota'].iloc[0]}" if df_agrupado.loc[df_agrupado['Monto Final'] == x, 'Nota'].iloc[0] else f"{x:,.2f}")
-        df_agrupado.drop(columns=['Nota', 'Monto Final'], inplace=True)
+            'Control'
+        ] = 'Posible Coincidencia'
         
         # Reordenar columnas para exportar
-        df_agrupado = df_agrupado.reindex(columns=['Estado', 'Concepto Final', 'Monto Total Agrupado'])
+        df_agrupado = df_agrupado.reindex(columns=['Estado', 'Concepto Final', 'Monto Total Agrupado', 'Control'])
         
-        # Exportar el DataFrame a la hoja
-        df_agrupado.to_excel(writer, sheet_name='Resumen Conceptos', index=False)
+        # Exportar el DataFrame a la hoja (sin el encabezado de Excel)
+        df_agrupado.to_excel(writer, sheet_name='Resumen Conceptos', startrow=1, index=False, header=False)
         
-        # Aplicar formato y colores a la HOJA 2
+        # ⚠️ Escribir encabezados manualmente para que el formato funcione
         worksheet_resumen = writer.sheets['Resumen Conceptos']
-        worksheet_resumen.set_column('A:B', 35)
-        worksheet_resumen.set_column('C:C', 35) # Ajuste el ancho para el texto extra
+        worksheet_resumen.write_row('A1', ['Estado', 'Concepto Final', 'Monto Total Agrupado', 'Control'], formato_encabezado_resumen)
+
+        # Aplicar formatos de columna
+        worksheet_resumen.set_column('A:A', 30)
+        worksheet_resumen.set_column('B:B', 35)
+        worksheet_resumen.set_column('C:C', 20, formato_numero) # Columna del Monto
+        worksheet_resumen.set_column('D:D', 25) # Columna Control
         
-        rango_resumen = f'$A$2:$A${len(df_agrupado) + 1}'
-        worksheet_resumen.conditional_format(rango_resumen, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Contabilidad', 'format': color_contable})
-        worksheet_resumen.conditional_format(rango_resumen, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Banco', 'format': color_banco})
+        # --- Formato Condicional para la Columna Control (Color de Fila) ---
+        rango_resumen_datos = f'$A$2:$D${len(df_agrupado) + 1}'
+        
+        # Regla: Si la columna D (Control) tiene "Posible Coincidencia", aplica color a toda la fila
+        worksheet_resumen.conditional_format(rango_resumen_datos, 
+            {'type': 'formula',
+             'criteria': '=$D2="Posible Coincidencia"', # La fórmula usa el valor de D2
+             'format': color_posible})
+        
+        # Formato de color para los estados Pendientes
+        rango_estados = f'$A$2:$A${len(df_agrupado) + 1}'
+        worksheet_resumen.conditional_format(rango_estados, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Contabilidad', 'format': color_contable})
+        worksheet_resumen.conditional_format(rango_estados, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Banco', 'format': color_banco})
 
 
     writer.close()
@@ -449,7 +462,7 @@ with st.expander("❓ Ver Instrucciones y Requisitos de Archivo"):
     st.markdown("""
     El archivo Excel descargado (`reporte_conciliacion_final.xlsx`) contiene dos hojas:
     * **Hoja 1 (Reporte Detallado):** Contiene todos los movimientos con un **Estado** y color.
-    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto solo para los movimientos que quedaron **Pendientes**. Los montos que coinciden en valor entre Contabilidad y Banco aparecerán marcados con `<< Posible Coincidencia`.
+    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto y una columna **"Control"**. Las filas con una `Posible Coincidencia` de suma entre orígenes se marcan en color **Violeta/Rosa Claro**.
     """)
 
 st.markdown("---")
