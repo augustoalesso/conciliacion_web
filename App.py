@@ -102,7 +102,7 @@ def formatear_reporte_fecha(df_merge_fecha):
         ['Conciliado por Fecha'],
         default='Error'
     )
-    df_conciliado = df_reporte[df_reporte['Estado'] != 'Error'].copy()
+    df_conciliado = df_reporte[df_reporte['_merge'] == 'both'].copy()
     
     COLUMNAS_RENOMBRAR = {f'Monto_C': 'Monto_C', f'Monto_B': 'Monto_B', 
         f'Concepto_C': 'Concepto_C', f'Concepto_B': 'Concepto_B',
@@ -179,21 +179,30 @@ def cargar_datos(uploaded_file, origen):
     
     return df[['Fecha', 'Monto', 'Abs_Monto', 'Concepto', ID_COL, 'ID_Original', 'Origen']]
 
+# -------------------------------------------------------------------------------------------------------------------------------------------------
+# --- FUNCIÓN CENTRAL DE CONCILIACIÓN (CUATRO PASOS) ---
+# -------------------------------------------------------------------------------------------------------------------------------------------------
+
 @st.cache_data
 def conciliar(df_contable, df_bancario):
-    """Realiza la conciliación en tres pasos."""
+    """Realiza la conciliación en CUATRO pasos, incluyendo la agregación final."""
     
     columnas_finales = get_columnas_finales()
     df_reporte_id = pd.DataFrame(columns=columnas_finales)
     df_reporte_fecha = pd.DataFrame(columns=columnas_finales)
     df_reporte_tolerancia = pd.DataFrame(columns=columnas_finales) 
+    df_reporte_agregado = pd.DataFrame(columns=columnas_finales) # Nuevo reporte
     
     df_c = df_contable.copy()
     df_b = df_bancario.copy()
     df_c['Conciliado'] = False
     df_b['Conciliado'] = False
 
-    # PASO 1: CONCILIACIÓN EXACTA POR ID y MONTO
+    # PASO 1, 2, 3: (ID, Fecha, Tolerancia)
+    
+    # ... (Lógica de los pasos 1, 2, y 3 aquí, asegurando que se actualicen las columnas 'Conciliado')
+    
+    # --- PASO 1: CONCILIACIÓN EXACTA POR ID y MONTO ---
     df_merge_id = pd.merge(df_c, df_b, on=[ID_COL, 'Abs_Monto'], how='inner', suffixes=('_C_ID', '_B_ID'))
     
     if not df_merge_id.empty:
@@ -211,7 +220,7 @@ def conciliar(df_contable, df_bancario):
     df_b_pendiente = df_b[df_b['Conciliado'] == False].copy().reset_index(drop=True)
 
     
-    # PASO 2: CONCILIACIÓN DE LOS RESTANTES por FECHA EXACTA y MONTO
+    # --- PASO 2: CONCILIACIÓN DE LOS RESTANTES por FECHA EXACTA y MONTO ---
     if not df_c_pendiente.empty or not df_b_pendiente.empty:
         df_merge_fecha = pd.merge(
             df_c_pendiente, df_b_pendiente, on=['Fecha', 'Abs_Monto'], how='outer', suffixes=('_C', '_B'), indicator=True
@@ -234,7 +243,7 @@ def conciliar(df_contable, df_bancario):
             df_b_pendiente = df_b[df_b['Conciliado'] == False].copy().reset_index(drop=True)
 
     
-    # PASO 3: CONCILIACIÓN DE LOS ÚLTIMOS RESTANTES por +/- N DÍAS
+    # --- PASO 3: CONCILIACIÓN DE LOS ÚLTIMOS RESTANTES por +/- N DÍAS ---
     
     conciliados_tolerancia_list = []
     
@@ -274,19 +283,90 @@ def conciliar(df_contable, df_bancario):
 
         df_reporte_tolerancia = pd.DataFrame(conciliados_tolerancia_list, columns=columnas_finales)
 
-    
-    # CONSOLIDACIÓN DE LOS PENDIENTES FINALES
-    df_c_final = df_c[df_c['Conciliado'] == False].copy()
-    df_b_final = df_b[df_b['Conciliado'] == False].copy()
+    # Preparar DataFrames Pendientes después del Paso 3
+    df_c_pendiente = df_c[df_c['Conciliado'] == False].copy().reset_index(drop=True)
+    df_b_pendiente = df_b[df_b['Conciliado'] == False].copy().reset_index(drop=True)
 
-    df_final_pendientes = pd.merge(
-        df_c_final, df_b_final, on='Abs_Monto', how='outer', suffixes=('_C', '_B'), indicator=True
+    
+    # --- PASO 4 (NUEVO): POSIBLE COINCIDENCIA POR SUMA AGRUPADA DE CONCEPTOS PENDIENTES ---
+    
+    matched_c_ids = set()
+    matched_b_ids = set()
+    conciliados_agregados_list = []
+
+    if not df_c_pendiente.empty and not df_b_pendiente.empty:
+        # Agrupar y sumar por Concepto el monto absoluto de los PENDIENTES
+        grouped_c = df_c_pendiente.groupby('Concepto')['Abs_Monto'].sum().reset_index()
+        grouped_b = df_b_pendiente.groupby('Concepto')['Abs_Monto'].sum().reset_index()
+
+        grouped_c.rename(columns={'Abs_Monto': 'Sum_C'}, inplace=True)
+        grouped_b.rename(columns={'Abs_Monto': 'Sum_B'}, inplace=True)
+
+        # Buscar coincidencias donde la suma de un concepto C sea igual a la suma de un concepto B
+        df_grouped_merge = pd.merge(grouped_c, grouped_b, 
+                                    left_on='Sum_C', right_on='Sum_B', 
+                                    how='inner', 
+                                    suffixes=('_C', '_B'))
+        
+        # Iterar sobre las coincidencias de sumas agregadas
+        for index, row in df_grouped_merge.iterrows():
+            concept_c = row['Concepto_C']
+            concept_b = row['Concepto_B']
+            
+            # Movimientos individuales que forman la suma en Contabilidad
+            df_c_matched = df_c_pendiente[df_c_pendiente['Concepto'] == concept_c]
+            
+            # Movimientos individuales que forman la suma en Banco
+            df_b_matched = df_b_pendiente[df_b_pendiente['Concepto'] == concept_b]
+
+            # 1. Añadir movimientos de Contabilidad (marcando el grupo de Banco que hizo match)
+            for idx, item in df_c_matched.iterrows():
+                conciliados_agregados_list.append({
+                    'Estado': 'Posible Coincidencia Agregada',
+                    'Fecha': item['Fecha'],
+                    'Monto_C': item['Monto'],
+                    'Monto_B': np.nan,
+                    'Concepto_C': item['Concepto'],
+                    'Concepto_B': concept_b, 
+                    f'{ID_COL}_C': item[ID_COL],
+                    f'{ID_COL}_B': f'GRUPO B: {concept_b}' # Indicamos el grupo coincidente
+                })
+                matched_c_ids.add(item['ID_Original'])
+                
+            # 2. Añadir movimientos de Banco (marcando el grupo de Contabilidad que hizo match)
+            for idx, item in df_b_matched.iterrows():
+                conciliados_agregados_list.append({
+                    'Estado': 'Posible Coincidencia Agregada',
+                    'Fecha': item['Fecha'],
+                    'Monto_C': np.nan, 
+                    'Monto_B': item['Monto'],
+                    'Concepto_C': concept_c, # Concepto que generó la coincidencia en Contable
+                    'Concepto_B': item['Concepto'],
+                    f'{ID_COL}_C': f'GRUPO C: {concept_c}',
+                    f'{ID_COL}_B': item[ID_COL]
+                })
+                matched_b_ids.add(item['ID_Original'])
+
+    df_reporte_agregado = pd.DataFrame(conciliados_agregados_list, columns=columnas_finales)
+
+    # Filtrar los movimientos que ahora son "Posible Coincidencia" para que no salgan como Pendientes
+    df_c_final_new = df_c_pendiente[~df_c_pendiente['ID_Original'].isin(matched_c_ids)].copy()
+    df_b_final_new = df_b_pendiente[~df_b_pendiente['ID_Original'].isin(matched_b_ids)].copy()
+
+    
+    # CONSOLIDACIÓN DE LOS PENDIENTES FINALES REALES
+    df_final_pendientes_new = pd.merge(
+        df_c_final_new, df_b_final_new, on='Abs_Monto', how='outer', suffixes=('_C', '_B'), indicator=True
     )
 
-    df_reporte_pendientes = formatear_reporte_pendientes(df_final_pendientes)
+    df_reporte_pendientes_new = formatear_reporte_pendientes(df_final_pendientes_new)
+
     
-    # CONCATENACIÓN FINAL
-    data_frames_to_concat = [df for df in [df_reporte_id, df_reporte_fecha, df_reporte_tolerancia, df_reporte_pendientes] if not df.empty]
+    # CONCATENACIÓN FINAL DE LOS CUATRO REPORTES
+    data_frames_to_concat = [
+        df for df in [df_reporte_id, df_reporte_fecha, df_reporte_tolerancia, 
+                      df_reporte_agregado, df_reporte_pendientes_new] if not df.empty
+    ]
     
     df_reporte = pd.concat(data_frames_to_concat, ignore_index=True)
     
@@ -305,6 +385,10 @@ def to_excel_with_summary(df):
     color_tolerancia = workbook.add_format({'bg_color': '#B7DDF8', 'font_color': '#0B5394'})
     color_contable = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
     color_banco = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+    
+    # NUEVO COLOR: Morado/Rosa Claro (#E0BBE4 / #8e44ad)
+    color_posible = workbook.add_format({'bg_color': '#E0BBE4', 'font_color': '#5D0970'})
+    
     formato_numero = workbook.add_format({'num_format': '#,##0.00'}) 
     formato_encabezado_resumen = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#D9D9D9', 'border': 1})
     formato_titulo_resumen = workbook.add_format({'bold': True, 'font_size': 14})
@@ -334,12 +418,13 @@ def to_excel_with_summary(df):
     worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': 'Conciliado por ID', 'format': color_conciliado})
     worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': 'Conciliado por Fecha', 'format': color_conciliado})
     worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': f'+/- {TOLERANCIA_DIAS} Días', 'format': color_tolerancia}) 
+    worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': 'Posible Coincidencia Agregada', 'format': color_posible}) # Nuevo Formato
     worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Contabilidad', 'format': color_contable})
     worksheet.conditional_format(rango_datos, {'type': 'text', 'criteria': 'containing', 'value': 'Solo en Banco', 'format': color_banco})
     worksheet.set_column('A:A', 35); worksheet.set_column('B:B', 15); worksheet.set_column('E:H', 25) 
     
     
-    # 2. HOJA 2: RESUMEN POR CONCEPTO
+    # 2. HOJA 2: RESUMEN POR CONCEPTO (Solo se agrupan los REALMENTE PENDIENTES)
     df_pendientes = df[df['Estado'].str.contains('Pendiente - Solo en')]
     
     if not df_pendientes.empty:
@@ -365,7 +450,7 @@ def to_excel_with_summary(df):
     return processed_data
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------
-# --- ESTRUCTURA PRINCIPAL DE LA APLICACIÓN STREAMLIT (Frontend Mejorado) ---
+# --- ESTRUCTURA PRINCIPAL DE LA APLICACIÓN STREAMLIT (Frontend) ---
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 
 # CONFIGURACIÓN DE PÁGINA ANTES DEL LOGIN
@@ -375,7 +460,7 @@ st.set_page_config(page_title="Conciliación Bancaria Avanzada", layout="centere
 if not check_password():
     st.stop() 
 
-# ⚠️ BOTÓN DE CERRAR SESIÓN (Añadido)
+# ⚠️ BOTÓN DE CERRAR SESIÓN 
 with st.sidebar:
     st.markdown("### Opciones de Usuario")
     st.button("🚪 Cerrar Sesión", on_click=logout, type="secondary", use_container_width=True)
@@ -398,18 +483,19 @@ with st.expander("❓ Ver Instrucciones y Requisitos de Archivo"):
     * **Contabilidad:** Debe contener **`Debe`** y **`Haber`**.
     * **Bancario:** Debe contener la columna **`Monto`**.
     """)
-    st.subheader("2. Proceso de Conciliación (Triple Paso)")
+    st.subheader("2. Proceso de Conciliación (Cuatro Pasos)")
     st.markdown(f"""
     El programa ejecuta la conciliación automáticamente en este orden:
-    1.  **Paso 1 (Máxima Precisión):** Busca coincidencias exactas por **`Numero de operación`** y **Monto Absoluto**.
-    2.  **Paso 2 (Fecha Exacta):** Busca los movimientos restantes por **`Fecha`** exacta y **Monto Absoluto**.
-    3.  **Paso 3 (Tolerancia Temporal):** Busca los movimientos restantes por **Monto Absoluto** y una tolerancia de **$\pm {TOLERANCIA_DIAS}$ días** desde la fecha contable.
+    1.  **Paso 1 (Máxima Precisión):** Coincidencias exactas por **`Numero de operación`** y **Monto Absoluto**.
+    2.  **Paso 2 (Fecha Exacta):** Coincidencias restantes por **`Fecha`** exacta y **Monto Absoluto**.
+    3.  **Paso 3 (Tolerancia Temporal):** Coincidencias restantes por **Monto Absoluto** y tolerancia de **$\pm {TOLERANCIA_DIAS}$ días**.
+    4.  **Paso 4 (Agregación de Conceptos):** **POSIBLES COINCIDENCIAS** donde la **suma** total de un `Concepto` pendiente en Contabilidad es igual a la **suma** total de un `Concepto` pendiente en Banco.
     """)
     st.subheader("3. Contenido del Reporte Final")
     st.markdown("""
     El archivo Excel descargado (`reporte_conciliacion_final.xlsx`) contiene dos hojas:
-    * **Hoja 1 (Reporte Detallado):** Contiene todos los movimientos con un **Estado** codificado por colores.
-    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto (ej. Comisiones, Intereses) solo para los movimientos que quedaron **Pendientes** (Solo en Contabilidad / Solo en Banco).
+    * **Hoja 1 (Reporte Detallado):** Contiene todos los movimientos con un **Estado** y color. Los movimientos del Paso 4 aparecerán en **Morado/Rosa Claro** como **"Posible Coincidencia Agregada"**.
+    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto solo para los movimientos que quedaron **Pendientes** (después del Paso 4).
     """)
 
 st.markdown("---")
@@ -451,7 +537,7 @@ if st.button("▶️ EJECUTAR CONCILIACIÓN", type="primary", use_container_widt
         if df_contable is not None and df_bancario is not None:
             
             # 2. Ejecutar Conciliación con Spinner
-            with st.spinner("Ejecutando la lógica de conciliación (Triple Paso)..."):
+            with st.spinner("Ejecutando la lógica de conciliación (Cuatro Pasos)..."):
                 df_reporte = conciliar(df_contable, df_bancario)
                 
             # 3. Mostrar Resumen Estadístico
