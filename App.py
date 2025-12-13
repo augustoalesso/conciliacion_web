@@ -297,7 +297,7 @@ def conciliar(df_contable, df_bancario):
     return df_reporte.sort_values(by='Fecha').reset_index(drop=True)
 
 # -------------------------------------------------------------------------------------------------------------------------------------------------
-# --- FUNCIÓN DE EXCEL CON COLUMNA "CONTROL" Y FORMATO CONDICIONAL ---
+# --- FUNCIÓN DE EXCEL CORREGIDA ---
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 
 @st.cache_data
@@ -351,36 +351,50 @@ def to_excel_with_summary(df):
     worksheet.set_column('A:A', 35); worksheet.set_column('B:B', 15); worksheet.set_column('E:H', 25) 
     
     
-    # 2. HOJA 2: RESUMEN POR CONCEPTO (CON COLUMNA "CONTROL")
+    # 2. HOJA 2: RESUMEN POR CONCEPTO (CON COLUMNA "CONTROL" Y SIGNOS CORRECTOS)
     df_pendientes = df[df['Estado'].str.contains('Pendiente - Solo en')]
     
     if not df_pendientes.empty:
         df_resumen = df_pendientes[['Estado', 'Concepto_C', 'Concepto_B', 'Monto_C', 'Monto_B']].copy()
         df_resumen['Concepto Final'] = df_resumen['Concepto_C'].fillna(df_resumen['Concepto_B'])
-        df_resumen['Monto'] = df_resumen['Monto_C'].fillna(df_resumen['Monto_B']).abs() # Usamos valor absoluto para las sumas
         
-        # Agrupar y calcular la suma total por estado y concepto
-        df_agrupado = df_resumen.groupby(['Estado', 'Concepto Final'])['Monto'].sum().reset_index()
-        df_agrupado = df_agrupado.rename(columns={'Monto': 'Monto Total Agrupado'})
-
+        # 1. Monto con signo original (Para la columna de Monto final)
+        df_resumen['Monto_Signed'] = df_resumen['Monto_C'].fillna(df_resumen['Monto_B'])
+        # 2. Monto en absoluto (Para la lógica de coincidencia)
+        df_resumen['Monto_Abs'] = df_resumen['Monto_Signed'].abs() 
+        
+        # Agrupar para el valor final (Monto Total Agrupado - con signo)
+        df_agrupado_signed = df_resumen.groupby(['Estado', 'Concepto Final'])['Monto_Signed'].sum().reset_index()
+        df_agrupado_signed = df_agrupado_signed.rename(columns={'Monto_Signed': 'Monto Total Agrupado'})
+        
+        # Agrupar para la detección de coincidencia (Monto Total Absoluto - sin signo)
+        df_agrupado_abs = df_resumen.groupby(['Estado', 'Concepto Final'])['Monto_Abs'].sum().reset_index()
+        df_agrupado_abs = df_agrupado_abs.rename(columns={'Monto_Abs': 'Monto Total Absoluto'})
+        
+        # Combinar ambos DataFrames en uno solo para tener el Monto Signed y el Monto Absolute
+        df_agrupado = pd.merge(df_agrupado_signed, df_agrupado_abs, on=['Estado', 'Concepto Final'])
+        
         # --- LÓGICA DE DETECCIÓN DE COINCIDENCIA DE SUMAS ---
-        df_contable_sums = df_agrupado[df_agrupado['Estado'].str.contains('Solo en Contabilidad')].copy()
-        df_banco_sums = df_agrupado[df_agrupado['Estado'].str.contains('Solo en Banco')].copy()
+        df_contable_abs = df_agrupado[df_agrupado['Estado'].str.contains('Solo en Contabilidad')].copy()
+        df_banco_abs = df_agrupado[df_agrupado['Estado'].str.contains('Solo en Banco')].copy()
         
-        # Encontrar montos totales coincidentes entre ambos orígenes
-        matching_sums = pd.merge(
-            df_contable_sums,
-            df_banco_sums,
-            on='Monto Total Agrupado',
+        # Encontrar montos totales coincidentes (usando el ABSOLUTO)
+        matching_abs_sums = pd.merge(
+            df_contable_abs,
+            df_banco_abs,
+            on='Monto Total Absoluto',
             how='inner'
-        )['Monto Total Agrupado'].unique()
+        )['Monto Total Absoluto'].unique()
         
-        # Crear la columna de control, llenando con "Posible Coincidencia" si el monto suma coincide
+        # Crear la columna de control, llenando con "Posible Coincidencia" si el monto absoluto suma coincide
         df_agrupado['Control'] = ''
         df_agrupado.loc[
-            df_agrupado['Monto Total Agrupado'].isin(matching_sums),
+            df_agrupado['Monto Total Absoluto'].isin(matching_abs_sums),
             'Control'
         ] = 'Posible Coincidencia'
+        
+        # Eliminar la columna auxiliar de absoluto antes de exportar
+        df_agrupado.drop(columns=['Monto Total Absoluto'], inplace=True)
         
         # Reordenar columnas para exportar
         df_agrupado = df_agrupado.reindex(columns=['Estado', 'Concepto Final', 'Monto Total Agrupado', 'Control'])
@@ -395,7 +409,7 @@ def to_excel_with_summary(df):
         # Aplicar formatos de columna
         worksheet_resumen.set_column('A:A', 30)
         worksheet_resumen.set_column('B:B', 35)
-        worksheet_resumen.set_column('C:C', 20, formato_numero) # Columna del Monto
+        worksheet_resumen.set_column('C:C', 20, formato_numero) # Columna del Monto (con signo)
         worksheet_resumen.set_column('D:D', 25) # Columna Control
         
         # --- Formato Condicional para la Columna Control (Color de Fila) ---
@@ -462,7 +476,7 @@ with st.expander("❓ Ver Instrucciones y Requisitos de Archivo"):
     st.markdown("""
     El archivo Excel descargado (`reporte_conciliacion_final.xlsx`) contiene dos hojas:
     * **Hoja 1 (Reporte Detallado):** Contiene todos los movimientos con un **Estado** y color.
-    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto y una columna **"Control"**. Las filas con una `Posible Coincidencia` de suma entre orígenes se marcan en color **Violeta/Rosa Claro**.
+    * **Hoja 2 (Resumen Conceptos):** Muestra el **Monto Total Agrupado** por Concepto y una columna **"Control"**. Los montos ahora mantienen su signo original. Las filas con una `Posible Coincidencia` de suma entre orígenes se marcan en color **Violeta/Rosa Claro**.
     """)
 
 st.markdown("---")
