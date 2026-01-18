@@ -59,7 +59,7 @@ COLUMNAS_MAPEO = {
 def get_columnas_finales():
     return ['Estado', 'Fecha', 'Monto_C', 'Monto_B', 'Concepto_C', 'Concepto_B', f'{ID_COL}_C', f'{ID_COL}_B']
 
-# --- Funciones Auxiliares de Formateo ---
+# --- Funciones de Formateo ---
 def formatear_reporte_id(df_merge_id):
     COLUMNAS_RENOMBRAR = {f'Monto_C_ID': 'Monto_C', f'Monto_B_ID': 'Monto_B',
         f'Concepto_C_ID': 'Concepto_C', f'Concepto_B_ID': 'Concepto_B',
@@ -70,9 +70,8 @@ def formatear_reporte_id(df_merge_id):
     return df_reporte.reindex(columns=get_columnas_finales())
 
 def formatear_reporte_fecha(df_merge_fecha):
-    df_reporte = df_merge_fecha.copy()
-    df_reporte['Estado'] = np.select([df_reporte['_merge'] == 'both'], ['Conciliado por Fecha'], default='Error')
-    df_conciliado = df_reporte[df_reporte['_merge'] == 'both'].copy()
+    df_conciliado = df_merge_fecha[df_merge_fecha['_merge'] == 'both'].copy()
+    df_conciliado['Estado'] = 'Conciliado por Fecha'
     COLUMNAS_RENOMBRAR = {f'Monto_C': 'Monto_C', f'Monto_B': 'Monto_B', 
         f'Concepto_C': 'Concepto_C', f'Concepto_B': 'Concepto_B',
         f'{ID_COL}_C': f'{ID_COL}_C', f'{ID_COL}_B': f'{ID_COL}_B'}
@@ -163,7 +162,7 @@ def conciliar(df_contable, df_bancario):
     return pd.concat([df_reporte_id, df_reporte_fecha, df_reporte_tolerancia, df_reporte_pendientes]).sort_values('Fecha')
 
 # ==========================================================
-# --- HOJA DE EXCEL CON CARÁTULA Y COLORES ESTRICTOS ---
+# --- GENERACIÓN DE EXCEL CON FORMATO REFORZADO ---
 # ==========================================================
 @st.cache_data
 def to_excel_with_summary(df, cliente_nombre=""):
@@ -171,18 +170,19 @@ def to_excel_with_summary(df, cliente_nombre=""):
     writer = pd.ExcelWriter(output, engine='xlsxwriter', datetime_format='dd/mm/yyyy')
     workbook = writer.book
 
-    # Formatos de Celda
+    # Formatos
     f_tit = workbook.add_format({'bold': True, 'font_size': 24, 'font_color': '#1E1B4B'})
     f_sub = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#4F46E5'})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#F3F4F6', 'border': 1, 'align': 'center'})
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
     f_bord = workbook.add_format({'border': 1})
     
-    # Formatos de Colores para Conciliación
-    color_conc = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
-    color_tol = workbook.add_format({'bg_color': '#B7DDF8', 'font_color': '#0B5394', 'border': 1})
-    color_cont = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1}) # AMARILLO
-    color_banc = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1}) # ROJO
+    # Semáforo FinMatch
+    color_exacto = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1}) # Verde Oscuro
+    color_margen = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1}) # Azul Claro (Margen)
+    color_contab = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1}) # Amarillo
+    color_banco = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1})  # Rojo
+    color_posible = workbook.add_format({'bg_color': '#E0BBE4', 'font_color': '#5D0970', 'border': 1}) # Violeta
 
     # --- HOJA 0: CARÁTULA ---
     ws0 = workbook.add_worksheet('Certificado FinMatch')
@@ -199,31 +199,44 @@ def to_excel_with_summary(df, cliente_nombre=""):
     for i, row in res_data.iterrows():
         ws0.write_row(8+i, 1, row, f_bord)
 
-    # --- HOJA 1: REPORTE CONCILIACIÓN (DETALLE) ---
+    # --- HOJA 1: DETALLE ---
     ws1 = workbook.add_worksheet('Reporte Conciliación')
     df.to_excel(writer, sheet_name='Reporte Conciliación', index=False)
     rango_det = f'A2:H{len(df)+1}'
-    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Conciliado', 'format': color_conc})
-    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Días', 'format': color_tol})
-    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_cont})
-    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banc})
+    
+    # Formato condicional estricto
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'por ID', 'format': color_exacto})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'por Fecha', 'format': color_exacto})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Días', 'format': color_margen})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_contab})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banco})
+    
     ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 35); ws1.set_column('E:H', 25)
 
-    # --- HOJA 2: RESUMEN CONCEPTOS (CON COLORES) ---
+    # --- HOJA 2: RESUMEN CONCEPTOS ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
     if not df_p.empty:
         ws2 = workbook.add_worksheet('Resumen Conceptos')
         df_p['Conc_F'] = df_p['Concepto_C'].fillna(df_p['Concepto_B'])
+        
+        # Lógica de posibles coincidencias por monto
         ag = df_p.groupby(['Estado', 'Conc_F'])[['Monto_C', 'Monto_B']].sum().reset_index()
         ag['Total'] = ag['Monto_C'].fillna(0) + ag['Monto_B'].fillna(0)
-        ag[['Estado', 'Conc_F', 'Total']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
+        ag['Abs_Total'] = ag['Total'].abs()
         
-        # Aplicar colores en hoja de conceptos
-        rango_conceptos = f'A2:C{len(ag)+1}'
-        ws2.conditional_format(rango_conceptos, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_cont})
-        ws2.conditional_format(rango_conceptos, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banc})
+        # Identificar duplicados de montos absolutos entre estados
+        duplicados = ag[ag.duplicated('Abs_Total', keep=False)]['Abs_Total'].unique()
+        ag['Control'] = np.where(ag['Abs_Total'].isin(duplicados), 'Posible Coincidencia', '')
         
-        ws2.set_column('A:A', 35); ws2.set_column('B:B', 45); ws2.set_column('C:C', 18, f_num)
+        # Exportar
+        ag[['Estado', 'Conc_F', 'Total', 'Control']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
+        
+        rango_concept = f'A2:D{len(ag)+1}'
+        ws2.conditional_format(rango_concept, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_contab})
+        ws2.conditional_format(rango_concept, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banco})
+        ws2.conditional_format(rango_concept, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': color_posible})
+        
+        ws2.set_column('A:A', 35); ws2.set_column('B:B', 45); ws2.set_column('C:D', 18, f_num)
 
     writer.close()
     return output.getvalue()
@@ -235,7 +248,6 @@ st.set_page_config(page_title="ConciliadorWeb by FinMatch", layout="centered")
 
 if check_password():
     with st.sidebar:
-        st.markdown("### Opciones")
         st.button("🚪 Cerrar Sesión", on_click=logout)
     
     st.title("Sistema ConciliadorWeb 🏦")
