@@ -75,14 +75,12 @@ def ejecutar_conciliacion(df_c, df_b):
     df_c['Conciliado'] = False
     df_b['Conciliado'] = False
 
-    # 1. ID Exacto
     m1 = pd.merge(df_c, df_b, on=[ID_COL, 'Abs_Monto'], how='inner', suffixes=('_C', '_B'))
     for ic, ib in zip(m1['ID_Original_C'], m1['ID_Original_B']):
         df_c.loc[df_c['ID_Original'] == ic, 'Conciliado'] = True
         df_b.loc[df_b['ID_Original'] == ib, 'Conciliado'] = True
     rep1 = m1.assign(Estado='Conciliado por ID')
 
-    # 2. Fecha Exacta
     df_c_p = df_c[~df_c['Conciliado']].copy()
     df_b_p = df_b[~df_b['Conciliado']].copy()
     m2 = pd.merge(df_c_p, df_b_p, on=['Fecha', 'Abs_Monto'], how='inner', suffixes=('_C', '_B'))
@@ -91,7 +89,6 @@ def ejecutar_conciliacion(df_c, df_b):
         df_b.loc[df_b['ID_Original'] == ib, 'Conciliado'] = True
     rep2 = m2.assign(Estado='Conciliado por Fecha')
 
-    # 3. Tolerancia (Texto Informativo)
     df_c_p2 = df_c[~df_c['Conciliado']].copy()
     df_b_p2 = df_b[~df_b['Conciliado']].copy()
     t_list = []
@@ -107,7 +104,6 @@ def ejecutar_conciliacion(df_c, df_b):
             t_list.append({'Estado': f'Conciliado por Tolerancia (±{TOLERANCIA_DIAS} días)', 'Fecha': rb['Fecha'], 'Monto_C': rc['Monto'], 'Monto_B': rb['Monto'], 'Concepto_C': rc['Concepto'], 'Concepto_B': rb['Concepto'], f'{ID_COL}_C': rc[ID_COL], f'{ID_COL}_B': rb[ID_COL]})
     rep3 = pd.DataFrame(t_list)
 
-    # Pendientes
     rep4_c = df_c[~df_c['Conciliado']].rename(columns={'Monto':'Monto_C', 'Concepto':'Concepto_C', ID_COL: f'{ID_COL}_C'}).assign(Estado='Pendiente - Libro Contable')
     rep4_b = df_b[~df_b['Conciliado']].rename(columns={'Monto':'Monto_B', 'Concepto':'Concepto_B', ID_COL: f'{ID_COL}_B'}).assign(Estado='Pendiente - Extracto Bancario')
     
@@ -116,27 +112,26 @@ def ejecutar_conciliacion(df_c, df_b):
     return final.reindex(columns=get_columnas_finales()).sort_values('Fecha')
 
 # ==========================================================
-# --- EXCEL PREMIUM ---
+# --- EXCEL PREMIUM (DISEÑO FINAL) ---
 # ==========================================================
 def to_excel_premium(df, cliente=""):
     output = io.BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter', datetime_format='dd/mm/yyyy')
     workbook = writer.book
 
-    # Formatos
+    # --- FORMATOS ---
     f_tit = workbook.add_format({'bold': True, 'font_size': 22, 'font_color': '#1E1B4B'})
     f_sub = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#4F46E5'})
+    f_head = workbook.add_format({'bold': True, 'bg_color': '#F2F2F2', 'border': 1, 'align': 'center'})
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
-    f_head = workbook.add_format({'bold': True, 'bg_color': '#F1F5F9', 'border': 1, 'align': 'center'})
     
-    # Colores solo para la columna Estado
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     c_azul = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1})
     c_amarillo = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1})
     c_rojo = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1})
     c_violeta = workbook.add_format({'bg_color': '#E0BBE4', 'font_color': '#5D0970', 'border': 1})
 
-    # --- HOJA 1: CERTIFICADO ---
+    # --- HOJA 1: CARÁTULA ---
     ws0 = workbook.add_worksheet('Certificado FinMatch')
     ws0.hide_gridlines(2)
     ws0.write('B2', 'FINMATCH', f_tit)
@@ -148,47 +143,54 @@ def to_excel_premium(df, cliente=""):
     ws0.write_row('B8', res.columns, f_head)
     for i, row in res.iterrows():
         txt = row['Estado']
-        if 'ID' in txt or 'Fecha' in txt: fmt = c_verde
-        elif 'Tolerancia' in txt: fmt = c_azul
-        elif 'Contable' in txt: fmt = c_amarillo
-        else: fmt = c_rojo
+        fmt = c_verde if 'ID' in txt or 'Fecha' in txt else c_azul if 'Tolerancia' in txt else c_amarillo if 'Contable' in txt else c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
-    # --- HOJA 2: DETALLE (COLORES SOLO EN COLUMNA A) ---
+    # --- HOJA 2: REPORTE DETALLADO ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
-    df.to_excel(writer, sheet_name='Reporte Detallado', index=False)
+    # Escribir encabezados con el formato gris
+    for col_num, value in enumerate(df.columns.values):
+        ws1.write(0, col_num, value, f_head)
+    # Escribir datos
+    df.to_excel(writer, sheet_name='Reporte Detallado', startrow=1, index=False, header=False)
     
-    # Reglas aplicadas SOLO a la columna A (Columna 0 en xlsxwriter)
-    rows = len(df) + 1
+    rows = len(df)
+    # Formato moneda y bordes SOLO hasta la última fila de datos
+    ws1.set_column('C:D', 15, f_num) 
+    
+    # Formato condicional solo en columna Estado (A)
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
     
-    ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 35); ws1.set_column('E:H', 25)
+    ws1.set_column('A:A', 35); ws1.set_column('B:B', 12); ws1.set_column('E:H', 25)
 
-    # --- HOJA 3: CONCEPTOS ---
+    # --- HOJA 3: RESUMEN CONCEPTOS ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
     if not df_p.empty:
         ws2 = workbook.add_worksheet('Resumen Conceptos')
         df_p['Concepto Final'] = df_p['Concepto_C'].fillna(df_p['Concepto_B'])
         ag = df_p.groupby(['Estado', 'Concepto Final'])[['Monto_C', 'Monto_B']].sum().reset_index()
         ag['Total'] = ag['Monto_C'].fillna(0) + ag['Monto_B'].fillna(0)
-        
         abs_totals = ag['Total'].abs()
         duplicados = ag[abs_totals.duplicated(keep=False)]['Total'].abs().unique()
         ag['Control'] = np.where(ag['Total'].abs().isin(duplicados), 'Posible Coincidencia', '')
         
-        ag[['Estado', 'Concepto Final', 'Total', 'Control']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
-        rows2 = len(ag) + 1
+        columnas_ag = ['Estado', 'Concepto Final', 'Total', 'Control']
+        # Encabezados gris en hoja 3
+        for col_num, value in enumerate(columnas_ag):
+            ws2.write(0, col_num, value, f_head)
         
-        # Colores solo en columna A y columna D (Control)
+        ag[columnas_ag].to_excel(writer, sheet_name='Resumen Conceptos', startrow=1, index=False, header=False)
+        rows2 = len(ag)
+        
+        ws2.set_column('C:C', 18, f_num)
         ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
         ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
         ws2.conditional_format(1, 3, rows2, 3, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': c_violeta})
-        
-        ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num); ws2.set_column('D:D', 25)
+        ws2.set_column('A:A', 35); ws2.set_column('B:B', 45); ws2.set_column('D:D', 20)
 
     writer.close()
     return output.getvalue()
@@ -196,18 +198,19 @@ def to_excel_premium(df, cliente=""):
 # ==========================================================
 # --- FRONTEND ---
 # ==========================================================
-st.set_page_config(page_title="FinMatch")
+st.set_page_config(page_title="FinMatch - ConciliadorWeb")
 if check_password():
-    st.title("Conciliador Web 🏦")
-    cliente = st.text_input("Empresa Cliente", "Distribuidora S.A.")
+    st.title("Sistema ConciliadorWeb 🏦")
+    cliente = st.text_input("Nombre de la Empresa Cliente", "Distribuidora S.A.")
     c1, c2 = st.columns(2)
-    with c1: up_c = st.file_uploader("Contabilidad", type=['xlsx'])
-    with c2: up_b = st.file_uploader("Banco", type=['xlsx'])
+    with c1: up_c = st.file_uploader("Archivo Contabilidad", type=['xlsx'])
+    with c2: up_b = st.file_uploader("Archivo Banco", type=['xlsx'])
 
-    if st.button("▶️ EJECUTAR"):
+    if st.button("▶️ EJECUTAR CONCILIACIÓN", type="primary"):
         if up_c and up_b:
-            dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
-            if dc is not None and db is not None:
-                res = ejecutar_conciliacion(dc, db)
-                st.success("✅ Conciliación completada")
-                st.download_button("⬇️ Descargar FinMatch_Reporte.xlsx", to_excel_premium(res, cliente), "FinMatch_Reporte.xlsx")
+            with st.spinner("Procesando auditoría..."):
+                dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
+                if dc is not None and db is not None:
+                    res = ejecutar_conciliacion(dc, db)
+                    st.success("✅ Auditoría completada con éxito")
+                    st.download_button("⬇️ Descargar Reporte FinMatch", to_excel_premium(res, cliente), "FinMatch_Reporte.xlsx")
