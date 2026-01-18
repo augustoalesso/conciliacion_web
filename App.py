@@ -107,9 +107,9 @@ def ejecutar_conciliacion(df_c, df_b):
             t_list.append({'Estado': 'Conciliado por Tolerancia', 'Fecha': rb['Fecha'], 'Monto_C': rc['Monto'], 'Monto_B': rb['Monto'], 'Concepto_C': rc['Concepto'], 'Concepto_B': rb['Concepto'], f'{ID_COL}_C': rc[ID_COL], f'{ID_COL}_B': rb[ID_COL]})
     rep3 = pd.DataFrame(t_list)
 
-    # Pendientes
-    rep4_c = df_c[~df_c['Conciliado']].rename(columns={'Monto':'Monto_C', 'Concepto':'Concepto_C', ID_COL: f'{ID_COL}_C'}).assign(Estado='Pendiente en Contabilidad')
-    rep4_b = df_b[~df_b['Conciliado']].rename(columns={'Monto':'Monto_B', 'Concepto':'Concepto_B', ID_COL: f'{ID_COL}_B'}).assign(Estado='Pendiente en Banco')
+    # Pendientes (IMPORTANTE: Nombres de estados únicos)
+    rep4_c = df_c[~df_c['Conciliado']].rename(columns={'Monto':'Monto_C', 'Concepto':'Concepto_C', ID_COL: f'{ID_COL}_C'}).assign(Estado='Pendiente - Libro Contable')
+    rep4_b = df_b[~df_b['Conciliado']].rename(columns={'Monto':'Monto_B', 'Concepto':'Concepto_B', ID_COL: f'{ID_COL}_B'}).assign(Estado='Pendiente - Extracto Bancario')
     
     final = pd.concat([rep1, rep2, rep3, rep4_c, rep4_b], ignore_index=True)
     final['Fecha'] = final['Fecha'].fillna(final['Fecha_B']).fillna(final['Fecha_C'])
@@ -147,10 +147,11 @@ def to_excel_premium(df, cliente=""):
     res.columns = ['Estado', 'Total']
     ws0.write_row('B8', res.columns, f_head)
     for i, row in res.iterrows():
-        # Lógica de color según el texto exacto
-        if 'ID' in row['Estado'] or 'Fecha' in row['Estado']: fmt = c_verde
-        elif 'Tolerancia' in row['Estado']: fmt = c_azul
-        elif 'Contabilidad' in row['Estado']: fmt = c_amarillo
+        # Lógica de color estricta para el cuadro resumen
+        txt = row['Estado']
+        if 'ID' in txt or 'Fecha' in txt: fmt = c_verde
+        elif 'Tolerancia' in txt: fmt = c_azul
+        elif 'Contable' in txt: fmt = c_amarillo
         else: fmt = c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
@@ -159,12 +160,12 @@ def to_excel_premium(df, cliente=""):
     df.to_excel(writer, sheet_name='Reporte Detallado', index=False)
     rng = f'A2:H{len(df)+1}'
     
-    # REGLAS DE FORMATO CONDICIONAL REVISADAS
+    # REGLAS DE FORMATO CONDICIONAL POR TEXTO EXACTO (Para evitar solapamientos)
+    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
+    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': c_amarillo})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': c_rojo})
     
     ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 30); ws1.set_column('E:H', 25)
 
@@ -183,10 +184,13 @@ def to_excel_premium(df, cliente=""):
         
         ag[['Estado', 'Concepto Final', 'Total', 'Control']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
         rng2 = f'A2:D{len(ag)+1}'
-        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': c_amarillo})
-        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': c_rojo})
+        
+        # Colores en hoja conceptos
+        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
+        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
         ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': c_violeta})
-        ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num)
+        
+        ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num); ws2.set_column('D:D', 20)
 
     writer.close()
     return output.getvalue()
