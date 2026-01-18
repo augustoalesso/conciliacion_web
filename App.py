@@ -112,7 +112,7 @@ def ejecutar_conciliacion(df_c, df_b):
     return final.reindex(columns=get_columnas_finales()).sort_values('Fecha')
 
 # ==========================================================
-# --- EXCEL PREMIUM ---
+# --- EXCEL PREMIUM (DISEÑO FINAL) ---
 # ==========================================================
 def to_excel_premium(df, cliente=""):
     output = io.BytesIO()
@@ -147,13 +147,15 @@ def to_excel_premium(df, cliente=""):
         fmt = c_verde if 'ID' in txt or 'Fecha' in txt else c_azul if 'Tolerancia' in txt else c_amarillo if 'Contable' in txt else c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
-    # --- HOJA 2: REPORTE DETALLE ---
+    # --- HOJA 2: REPORTE DETALLADO ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
     for col_num, value in enumerate(df.columns.values):
         ws1.write(0, col_num, value, f_head)
     
+    # Escritura celda por celda para evitar bordes infinitos
     for row_num, row_data in enumerate(df.values):
         for col_num, cell_value in enumerate(row_data):
+            # Columnas C y D (índice 2 y 3) son Monto_C y Monto_B
             fmt = f_num if col_num in [2, 3] else f_std
             ws1.write(row_num + 1, col_num, cell_value, fmt)
 
