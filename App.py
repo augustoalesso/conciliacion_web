@@ -129,6 +129,7 @@ def to_excel_premium(df, cliente=""):
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#F1F5F9', 'border': 1, 'align': 'center'})
     
+    # Colores Estrictos
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     c_azul = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1})
     c_amarillo = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1})
@@ -142,26 +143,32 @@ def to_excel_premium(df, cliente=""):
     ws0.write('B3', 'Reporte de Conciliación Bancaria', f_sub)
     ws0.write('B5', 'CLIENTE:', workbook.add_format({'bold': True})); ws0.write('C5', cliente.upper())
     
-    # Cuadro Resumen con Colores
     res = df['Estado'].value_counts().reset_index()
     res.columns = ['Estado', 'Total']
     ws0.write_row('B8', res.columns, f_head)
     for i, row in res.iterrows():
-        fmt = c_verde if 'ID' in row['Estado'] or 'Fecha' in row['Estado'] else c_azul if 'Tolerancia' in row['Estado'] else c_amarillo if 'Contabilidad' in row['Estado'] else c_rojo
+        # Lógica de color según el texto exacto
+        if 'ID' in row['Estado'] or 'Fecha' in row['Estado']: fmt = c_verde
+        elif 'Tolerancia' in row['Estado']: fmt = c_azul
+        elif 'Contabilidad' in row['Estado']: fmt = c_amarillo
+        else: fmt = c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
     # --- HOJA 2: DETALLE ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
     df.to_excel(writer, sheet_name='Reporte Detallado', index=False)
     rng = f'A2:H{len(df)+1}'
+    
+    # REGLAS DE FORMATO CONDICIONAL REVISADAS
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': c_amarillo})
     ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': c_rojo})
-    ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 30)
+    
+    ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 30); ws1.set_column('E:H', 25)
 
-    # --- HOJA 3: CONCEPTOS Y POSIBLES COINCIDENCIAS ---
+    # --- HOJA 3: CONCEPTOS ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
     if not df_p.empty:
         ws2 = workbook.add_worksheet('Resumen Conceptos')
@@ -169,7 +176,7 @@ def to_excel_premium(df, cliente=""):
         ag = df_p.groupby(['Estado', 'Concepto Final'])[['Monto_C', 'Monto_B']].sum().reset_index()
         ag['Total'] = ag['Monto_C'].fillna(0) + ag['Monto_B'].fillna(0)
         
-        # Identificar posibles coincidencias (Montos iguales entre Contabilidad y Banco)
+        # Detección de Posible Coincidencia
         abs_totals = ag['Total'].abs()
         duplicados = ag[abs_totals.duplicated(keep=False)]['Total'].abs().unique()
         ag['Control'] = np.where(ag['Total'].abs().isin(duplicados), 'Posible Coincidencia', '')
@@ -197,9 +204,8 @@ if check_password():
 
     if st.button("▶️ EJECUTAR"):
         if up_c and up_b:
-            with st.spinner("Procesando..."):
-                dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
-                if dc is not None and db is not None:
-                    resultado = ejecutar_conciliacion(dc, db)
-                    st.success("✅ Conciliación completada")
-                    st.download_button("⬇️ Descargar FinMatch_Reporte.xlsx", to_excel_premium(resultado, cliente), "FinMatch_Reporte.xlsx")
+            dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
+            if dc is not None and db is not None:
+                res = ejecutar_conciliacion(dc, db)
+                st.success("✅ Conciliación completada")
+                st.download_button("⬇️ Descargar FinMatch_Reporte.xlsx", to_excel_premium(res, cliente), "FinMatch_Reporte.xlsx")
