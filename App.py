@@ -14,6 +14,10 @@ except:
     VALID_USERNAME = "encargado"
     VALID_PASSWORD = "AugustoBot1"
 
+def logout():
+    st.session_state["password_correct"] = False
+    st.rerun()
+
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -87,7 +91,7 @@ def ejecutar_conciliacion(df_c, df_b):
         df_b.loc[df_b['ID_Original'] == ib, 'Conciliado'] = True
     rep2 = m2.assign(Estado='Conciliado por Fecha')
 
-    # 3. Tolerancia
+    # 3. Tolerancia (Texto Informativo)
     df_c_p2 = df_c[~df_c['Conciliado']].copy()
     df_b_p2 = df_b[~df_b['Conciliado']].copy()
     t_list = []
@@ -100,7 +104,7 @@ def ejecutar_conciliacion(df_c, df_b):
             rb = match.iloc[0]
             df_c.loc[df_c['ID_Original'] == rc['ID_Original'], 'Conciliado'] = True
             df_b.loc[df_b['ID_Original'] == rb['ID_Original'], 'Conciliado'] = True
-            t_list.append({'Estado': 'Conciliado por Tolerancia', 'Fecha': rb['Fecha'], 'Monto_C': rc['Monto'], 'Monto_B': rb['Monto'], 'Concepto_C': rc['Concepto'], 'Concepto_B': rb['Concepto'], f'{ID_COL}_C': rc[ID_COL], f'{ID_COL}_B': rb[ID_COL]})
+            t_list.append({'Estado': f'Conciliado por Tolerancia (±{TOLERANCIA_DIAS} días)', 'Fecha': rb['Fecha'], 'Monto_C': rc['Monto'], 'Monto_B': rb['Monto'], 'Concepto_C': rc['Concepto'], 'Concepto_B': rb['Concepto'], f'{ID_COL}_C': rc[ID_COL], f'{ID_COL}_B': rb[ID_COL]})
     rep3 = pd.DataFrame(t_list)
 
     # Pendientes
@@ -125,6 +129,7 @@ def to_excel_premium(df, cliente=""):
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#F1F5F9', 'border': 1, 'align': 'center'})
     
+    # Colores solo para la columna Estado
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     c_azul = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1})
     c_amarillo = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1})
@@ -149,34 +154,19 @@ def to_excel_premium(df, cliente=""):
         else: fmt = c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
-    # --- HOJA 2: DETALLE ---
+    # --- HOJA 2: DETALLE (COLORES SOLO EN COLUMNA A) ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
     df.to_excel(writer, sheet_name='Reporte Detallado', index=False)
     
-    # LÓGICA DE COLORES CORREGIDA: Se aplica a toda la fila basándose SOLO en la columna A (Estado)
+    # Reglas aplicadas SOLO a la columna A (Columna 0 en xlsxwriter)
     rows = len(df) + 1
-    ws1.conditional_format(1, 0, rows, 7, {
-        'type': 'formula',
-        'criteria': '=SEARCH("Contable", $A2)',
-        'format': c_amarillo
-    })
-    ws1.conditional_format(1, 0, rows, 7, {
-        'type': 'formula',
-        'criteria': '=SEARCH("Bancario", $A2)',
-        'format': c_rojo
-    })
-    ws1.conditional_format(1, 0, rows, 7, {
-        'type': 'formula',
-        'criteria': '=OR(SEARCH("ID", $A2), SEARCH("Fecha", $A2))',
-        'format': c_verde
-    })
-    ws1.conditional_format(1, 0, rows, 7, {
-        'type': 'formula',
-        'criteria': '=SEARCH("Tolerancia", $A2)',
-        'format': c_azul
-    })
+    ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
+    ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
+    ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
+    ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
+    ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
     
-    ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 30); ws1.set_column('E:H', 25)
+    ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 35); ws1.set_column('E:H', 25)
 
     # --- HOJA 3: CONCEPTOS ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
@@ -193,12 +183,12 @@ def to_excel_premium(df, cliente=""):
         ag[['Estado', 'Concepto Final', 'Total', 'Control']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
         rows2 = len(ag) + 1
         
-        # Formatos en Hoja 3 basados en la columna Estado o Control
-        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Contable", $A2)', 'format': c_amarillo})
-        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Bancario", $A2)', 'format': c_rojo})
-        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Posible", $D2)', 'format': c_violeta})
+        # Colores solo en columna A y columna D (Control)
+        ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
+        ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
+        ws2.conditional_format(1, 3, rows2, 3, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': c_violeta})
         
-        ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num); ws2.set_column('D:D', 20)
+        ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num); ws2.set_column('D:D', 25)
 
     writer.close()
     return output.getvalue()
