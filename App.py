@@ -109,10 +109,10 @@ def ejecutar_conciliacion(df_c, df_b):
     
     final = pd.concat([rep1, rep2, rep3, rep4_c, rep4_b], ignore_index=True)
     final['Fecha'] = final['Fecha'].fillna(final['Fecha_B']).fillna(final['Fecha_C'])
-    return final.reindex(columns=get_columnas_finales()).sort_values('Fecha')
+    return final.reindex(columns=get_columnas_finales()).sort_values('Fecha', na_position='last')
 
 # ==========================================================
-# --- EXCEL PREMIUM (DISEÑO FINAL) ---
+# --- EXCEL PREMIUM (DISEÑO FINAL SIN BORDES INFINITOS) ---
 # ==========================================================
 def to_excel_premium(df, cliente=""):
     output = io.BytesIO()
@@ -137,27 +137,31 @@ def to_excel_premium(df, cliente=""):
     ws0.hide_gridlines(2)
     ws0.write('B2', 'FINMATCH - CONCILIADOR WEB', f_tit)
     ws0.write('B3', 'Reporte de Auditoría de Conciliación Bancaria', f_sub)
-    ws0.write('B5', 'CLIENTE:', workbook.add_format({'bold': True})); ws0.write('C5', cliente.upper())
+    ws0.write('B5', 'CLIENTE:', workbook.add_format({'bold': True})); ws0.write('C5', str(cliente).upper())
     
     res = df['Estado'].value_counts().reset_index()
     res.columns = ['Estado', 'Total']
     ws0.write_row('B8', res.columns, f_head)
     for i, row in res.iterrows():
-        txt = row['Estado']
+        txt = str(row['Estado'])
         fmt = c_verde if 'ID' in txt or 'Fecha' in txt else c_azul if 'Tolerancia' in txt else c_amarillo if 'Contable' in txt else c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
-    # --- HOJA 2: REPORTE DETALLADO ---
+    # --- HOJA 2: REPORTE DETALLE ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
     for col_num, value in enumerate(df.columns.values):
         ws1.write(0, col_num, value, f_head)
     
-    # Escritura celda por celda para evitar bordes infinitos
     for row_num, row_data in enumerate(df.values):
         for col_num, cell_value in enumerate(row_data):
-            # Columnas C y D (índice 2 y 3) son Monto_C y Monto_B
-            fmt = f_num if col_num in [2, 3] else f_std
-            ws1.write(row_num + 1, col_num, cell_value, fmt)
+            # SEGURIDAD DE DATOS: Convertir NaN a tipos seguros para XlsxWriter
+            if pd.isna(cell_value):
+                cell_value = 0.0 if col_num in [2, 3] else ""
+            
+            if col_num in [2, 3]: # Columnas de Monto
+                ws1.write_number(row_num + 1, col_num, float(cell_value), f_num)
+            else:
+                ws1.write(row_num + 1, col_num, str(cell_value) if col_num != 1 else cell_value, f_std)
 
     rows = len(df)
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
@@ -185,8 +189,12 @@ def to_excel_premium(df, cliente=""):
         
         for row_num, row_data in enumerate(ag[columnas_ag].values):
             for col_num, cell_value in enumerate(row_data):
-                fmt = f_num if col_num == 2 else f_std
-                ws2.write(row_num + 1, col_num, cell_value, fmt)
+                if pd.isna(cell_value): cell_value = 0.0 if col_num == 2 else ""
+                
+                if col_num == 2:
+                    ws2.write_number(row_num + 1, col_num, float(cell_value), f_num)
+                else:
+                    ws2.write(row_num + 1, col_num, str(cell_value), f_std)
         
         rows2 = len(ag)
         ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
