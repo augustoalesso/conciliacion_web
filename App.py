@@ -122,8 +122,9 @@ def to_excel_premium(df, cliente=""):
     # --- FORMATOS ---
     f_tit = workbook.add_format({'bold': True, 'font_size': 22, 'font_color': '#1E1B4B'})
     f_sub = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#4F46E5'})
-    f_head = workbook.add_format({'bold': True, 'bg_color': '#F2F2F2', 'border': 1, 'align': 'center'})
+    f_head = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
+    f_std = workbook.add_format({'border': 1})
     
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     c_azul = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1})
@@ -134,8 +135,8 @@ def to_excel_premium(df, cliente=""):
     # --- HOJA 1: CARÁTULA ---
     ws0 = workbook.add_worksheet('Certificado FinMatch')
     ws0.hide_gridlines(2)
-    ws0.write('B2', 'FINMATCH', f_tit)
-    ws0.write('B3', 'Reporte de Conciliación Bancaria', f_sub)
+    ws0.write('B2', 'FINMATCH - CONCILIADOR WEB', f_tit)
+    ws0.write('B3', 'Reporte de Auditoría de Conciliación Bancaria', f_sub)
     ws0.write('B5', 'CLIENTE:', workbook.add_format({'bold': True})); ws0.write('C5', cliente.upper())
     
     res = df['Estado'].value_counts().reset_index()
@@ -146,19 +147,17 @@ def to_excel_premium(df, cliente=""):
         fmt = c_verde if 'ID' in txt or 'Fecha' in txt else c_azul if 'Tolerancia' in txt else c_amarillo if 'Contable' in txt else c_rojo
         ws0.write_row(8+i, 1, row, fmt)
 
-    # --- HOJA 2: REPORTE DETALLADO ---
+    # --- HOJA 2: REPORTE DETALLE ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
-    # Escribir encabezados con el formato gris
     for col_num, value in enumerate(df.columns.values):
         ws1.write(0, col_num, value, f_head)
-    # Escribir datos
-    df.to_excel(writer, sheet_name='Reporte Detallado', startrow=1, index=False, header=False)
     
+    for row_num, row_data in enumerate(df.values):
+        for col_num, cell_value in enumerate(row_data):
+            fmt = f_num if col_num in [2, 3] else f_std
+            ws1.write(row_num + 1, col_num, cell_value, fmt)
+
     rows = len(df)
-    # Formato moneda y bordes SOLO hasta la última fila de datos
-    ws1.set_column('C:D', 15, f_num) 
-    
-    # Formato condicional solo en columna Estado (A)
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
@@ -179,14 +178,15 @@ def to_excel_premium(df, cliente=""):
         ag['Control'] = np.where(ag['Total'].abs().isin(duplicados), 'Posible Coincidencia', '')
         
         columnas_ag = ['Estado', 'Concepto Final', 'Total', 'Control']
-        # Encabezados gris en hoja 3
         for col_num, value in enumerate(columnas_ag):
             ws2.write(0, col_num, value, f_head)
         
-        ag[columnas_ag].to_excel(writer, sheet_name='Resumen Conceptos', startrow=1, index=False, header=False)
-        rows2 = len(ag)
+        for row_num, row_data in enumerate(ag[columnas_ag].values):
+            for col_num, cell_value in enumerate(row_data):
+                fmt = f_num if col_num == 2 else f_std
+                ws2.write(row_num + 1, col_num, cell_value, fmt)
         
-        ws2.set_column('C:C', 18, f_num)
+        rows2 = len(ag)
         ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
         ws2.conditional_format(1, 0, rows2, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
         ws2.conditional_format(1, 3, rows2, 3, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': c_violeta})
@@ -208,9 +208,13 @@ if check_password():
 
     if st.button("▶️ EJECUTAR CONCILIACIÓN", type="primary"):
         if up_c and up_b:
-            with st.spinner("Procesando auditoría..."):
-                dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
-                if dc is not None and db is not None:
-                    res = ejecutar_conciliacion(dc, db)
-                    st.success("✅ Auditoría completada con éxito")
-                    st.download_button("⬇️ Descargar Reporte FinMatch", to_excel_premium(res, cliente), "FinMatch_Reporte.xlsx")
+            dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
+            if dc is not None and db is not None:
+                res = ejecutar_conciliacion(dc, db)
+                st.success("✅ Auditoría completada con éxito")
+                st.download_button(
+                    label="⬇️ Descargar FinMatch_Reporte.xlsx",
+                    data=to_excel_premium(res, cliente),
+                    file_name="FinMatch_Reporte.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
