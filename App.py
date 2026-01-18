@@ -5,7 +5,7 @@ import io
 from datetime import timedelta
 
 # ==========================================================
-# 🔒 LÓGICA DE ACCESO PRIVADO Y CONFIGURACIÓN SEGURA
+# 🔒 LÓGICA DE ACCESO PRIVADO
 # ==========================================================
 try:
     VALID_USERNAME = st.secrets["users"]["encargado"]
@@ -59,7 +59,7 @@ COLUMNAS_MAPEO = {
 def get_columnas_finales():
     return ['Estado', 'Fecha', 'Monto_C', 'Monto_B', 'Concepto_C', 'Concepto_B', f'{ID_COL}_C', f'{ID_COL}_B']
 
-# --- Funciones de Formateo Originales ---
+# --- Funciones Auxiliares de Formateo ---
 def formatear_reporte_id(df_merge_id):
     COLUMNAS_RENOMBRAR = {f'Monto_C_ID': 'Monto_C', f'Monto_B_ID': 'Monto_B',
         f'Concepto_C_ID': 'Concepto_C', f'Concepto_B_ID': 'Concepto_B',
@@ -163,7 +163,7 @@ def conciliar(df_contable, df_bancario):
     return pd.concat([df_reporte_id, df_reporte_fecha, df_reporte_tolerancia, df_reporte_pendientes]).sort_values('Fecha')
 
 # ==========================================================
-# --- HOJA DE EXCEL CON CARÁTULA FINMATCH ---
+# --- HOJA DE EXCEL CON CARÁTULA Y COLORES ESTRICTOS ---
 # ==========================================================
 @st.cache_data
 def to_excel_with_summary(df, cliente_nombre=""):
@@ -171,25 +171,24 @@ def to_excel_with_summary(df, cliente_nombre=""):
     writer = pd.ExcelWriter(output, engine='xlsxwriter', datetime_format='dd/mm/yyyy')
     workbook = writer.book
 
-    # Formatos
+    # Formatos de Celda
     f_tit = workbook.add_format({'bold': True, 'font_size': 24, 'font_color': '#1E1B4B'})
     f_sub = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#4F46E5'})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#F3F4F6', 'border': 1, 'align': 'center'})
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
     f_bord = workbook.add_format({'border': 1})
     
+    # Formatos de Colores para Conciliación
     color_conc = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     color_tol = workbook.add_format({'bg_color': '#B7DDF8', 'font_color': '#0B5394', 'border': 1})
-    color_cont = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1})
-    color_banc = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1})
-    color_posi = workbook.add_format({'bg_color': '#E0BBE4', 'font_color': '#5D0970', 'border': 1})
+    color_cont = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1}) # AMARILLO
+    color_banc = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1}) # ROJO
 
     # --- HOJA 0: CARÁTULA ---
     ws0 = workbook.add_worksheet('Certificado FinMatch')
     ws0.hide_gridlines(2)
     ws0.write('B2', 'FINMATCH', f_tit)
     ws0.write('B3', 'ConciliadorWeb - Reporte de Auditoría', f_sub)
-    
     ws0.write('B5', 'CLIENTE / EMPRESA:', workbook.add_format({'bold': True}))
     ws0.write('C5', cliente_nombre.upper() if cliente_nombre else "________________________")
     
@@ -200,26 +199,31 @@ def to_excel_with_summary(df, cliente_nombre=""):
     for i, row in res_data.iterrows():
         ws0.write_row(8+i, 1, row, f_bord)
 
-    # --- HOJA 1: DETALLE (Tal cual estaba) ---
+    # --- HOJA 1: REPORTE CONCILIACIÓN (DETALLE) ---
     ws1 = workbook.add_worksheet('Reporte Conciliación')
     df.to_excel(writer, sheet_name='Reporte Conciliación', index=False)
-    rango = f'A2:H{len(df)+1}'
-    ws1.conditional_format(rango, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': color_conc})
-    ws1.conditional_format(rango, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': color_conc})
-    ws1.conditional_format(rango, {'type': 'text', 'criteria': 'containing', 'value': 'Días', 'format': color_tol})
-    ws1.conditional_format(rango, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_cont})
-    ws1.conditional_format(rango, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banc})
+    rango_det = f'A2:H{len(df)+1}'
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Conciliado', 'format': color_conc})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Días', 'format': color_tol})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_cont})
+    ws1.conditional_format(rango_det, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banc})
     ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 35); ws1.set_column('E:H', 25)
 
-    # --- HOJA 2: CONCEPTOS (Tal cual estaba) ---
+    # --- HOJA 2: RESUMEN CONCEPTOS (CON COLORES) ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
     if not df_p.empty:
         ws2 = workbook.add_worksheet('Resumen Conceptos')
         df_p['Conc_F'] = df_p['Concepto_C'].fillna(df_p['Concepto_B'])
         ag = df_p.groupby(['Estado', 'Conc_F'])[['Monto_C', 'Monto_B']].sum().reset_index()
         ag['Total'] = ag['Monto_C'].fillna(0) + ag['Monto_B'].fillna(0)
-        ag.to_excel(writer, sheet_name='Resumen Conceptos', index=False)
-        ws2.set_column('B:B', 40); ws2.set_column('C:E', 15, f_num)
+        ag[['Estado', 'Conc_F', 'Total']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
+        
+        # Aplicar colores en hoja de conceptos
+        rango_conceptos = f'A2:C{len(ag)+1}'
+        ws2.conditional_format(rango_conceptos, {'type': 'text', 'criteria': 'containing', 'value': 'Contabilidad', 'format': color_cont})
+        ws2.conditional_format(rango_conceptos, {'type': 'text', 'criteria': 'containing', 'value': 'Banco', 'format': color_banc})
+        
+        ws2.set_column('A:A', 35); ws2.set_column('B:B', 45); ws2.set_column('C:C', 18, f_num)
 
     writer.close()
     return output.getvalue()
@@ -231,12 +235,11 @@ st.set_page_config(page_title="ConciliadorWeb by FinMatch", layout="centered")
 
 if check_password():
     with st.sidebar:
+        st.markdown("### Opciones")
         st.button("🚪 Cerrar Sesión", on_click=logout)
     
     st.title("Sistema ConciliadorWeb 🏦")
     st.info("Desarrollado por FinMatch para la gestión contable eficiente.")
-    
-    # Campo para nombre del cliente
     cliente = st.text_input("Nombre del Cliente / Empresa", placeholder="Ej: Distribuidora S.A.")
 
     col1, col2 = st.columns(2)
