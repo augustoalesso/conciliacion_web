@@ -14,10 +14,6 @@ except:
     VALID_USERNAME = "encargado"
     VALID_PASSWORD = "AugustoBot1"
 
-def logout():
-    st.session_state["password_correct"] = False
-    st.rerun()
-
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -107,7 +103,7 @@ def ejecutar_conciliacion(df_c, df_b):
             t_list.append({'Estado': 'Conciliado por Tolerancia', 'Fecha': rb['Fecha'], 'Monto_C': rc['Monto'], 'Monto_B': rb['Monto'], 'Concepto_C': rc['Concepto'], 'Concepto_B': rb['Concepto'], f'{ID_COL}_C': rc[ID_COL], f'{ID_COL}_B': rb[ID_COL]})
     rep3 = pd.DataFrame(t_list)
 
-    # Pendientes (IMPORTANTE: Nombres de estados únicos)
+    # Pendientes
     rep4_c = df_c[~df_c['Conciliado']].rename(columns={'Monto':'Monto_C', 'Concepto':'Concepto_C', ID_COL: f'{ID_COL}_C'}).assign(Estado='Pendiente - Libro Contable')
     rep4_b = df_b[~df_b['Conciliado']].rename(columns={'Monto':'Monto_B', 'Concepto':'Concepto_B', ID_COL: f'{ID_COL}_B'}).assign(Estado='Pendiente - Extracto Bancario')
     
@@ -129,7 +125,6 @@ def to_excel_premium(df, cliente=""):
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#F1F5F9', 'border': 1, 'align': 'center'})
     
-    # Colores Estrictos
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
     c_azul = workbook.add_format({'bg_color': '#DDEBF7', 'font_color': '#000000', 'border': 1})
     c_amarillo = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500', 'border': 1})
@@ -147,7 +142,6 @@ def to_excel_premium(df, cliente=""):
     res.columns = ['Estado', 'Total']
     ws0.write_row('B8', res.columns, f_head)
     for i, row in res.iterrows():
-        # Lógica de color estricta para el cuadro resumen
         txt = row['Estado']
         if 'ID' in txt or 'Fecha' in txt: fmt = c_verde
         elif 'Tolerancia' in txt: fmt = c_azul
@@ -158,14 +152,29 @@ def to_excel_premium(df, cliente=""):
     # --- HOJA 2: DETALLE ---
     ws1 = workbook.add_worksheet('Reporte Detallado')
     df.to_excel(writer, sheet_name='Reporte Detallado', index=False)
-    rng = f'A2:H{len(df)+1}'
     
-    # REGLAS DE FORMATO CONDICIONAL POR TEXTO EXACTO (Para evitar solapamientos)
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Fecha', 'format': c_verde})
-    ws1.conditional_format(rng, {'type': 'text', 'criteria': 'containing', 'value': 'Tolerancia', 'format': c_azul})
+    # LÓGICA DE COLORES CORREGIDA: Se aplica a toda la fila basándose SOLO en la columna A (Estado)
+    rows = len(df) + 1
+    ws1.conditional_format(1, 0, rows, 7, {
+        'type': 'formula',
+        'criteria': '=SEARCH("Contable", $A2)',
+        'format': c_amarillo
+    })
+    ws1.conditional_format(1, 0, rows, 7, {
+        'type': 'formula',
+        'criteria': '=SEARCH("Bancario", $A2)',
+        'format': c_rojo
+    })
+    ws1.conditional_format(1, 0, rows, 7, {
+        'type': 'formula',
+        'criteria': '=OR(SEARCH("ID", $A2), SEARCH("Fecha", $A2))',
+        'format': c_verde
+    })
+    ws1.conditional_format(1, 0, rows, 7, {
+        'type': 'formula',
+        'criteria': '=SEARCH("Tolerancia", $A2)',
+        'format': c_azul
+    })
     
     ws1.set_column('C:D', 15, f_num); ws1.set_column('A:A', 30); ws1.set_column('E:H', 25)
 
@@ -177,18 +186,17 @@ def to_excel_premium(df, cliente=""):
         ag = df_p.groupby(['Estado', 'Concepto Final'])[['Monto_C', 'Monto_B']].sum().reset_index()
         ag['Total'] = ag['Monto_C'].fillna(0) + ag['Monto_B'].fillna(0)
         
-        # Detección de Posible Coincidencia
         abs_totals = ag['Total'].abs()
         duplicados = ag[abs_totals.duplicated(keep=False)]['Total'].abs().unique()
         ag['Control'] = np.where(ag['Total'].abs().isin(duplicados), 'Posible Coincidencia', '')
         
         ag[['Estado', 'Concepto Final', 'Total', 'Control']].to_excel(writer, sheet_name='Resumen Conceptos', index=False)
-        rng2 = f'A2:D{len(ag)+1}'
+        rows2 = len(ag) + 1
         
-        # Colores en hoja conceptos
-        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
-        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
-        ws2.conditional_format(rng2, {'type': 'text', 'criteria': 'containing', 'value': 'Posible', 'format': c_violeta})
+        # Formatos en Hoja 3 basados en la columna Estado o Control
+        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Contable", $A2)', 'format': c_amarillo})
+        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Bancario", $A2)', 'format': c_rojo})
+        ws2.conditional_format(1, 0, rows2, 3, {'type': 'formula', 'criteria': '=SEARCH("Posible", $D2)', 'format': c_violeta})
         
         ws2.set_column('B:B', 40); ws2.set_column('C:C', 15, f_num); ws2.set_column('D:D', 20)
 
