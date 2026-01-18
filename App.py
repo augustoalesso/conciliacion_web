@@ -108,11 +108,11 @@ def ejecutar_conciliacion(df_c, df_b):
     rep4_b = df_b[~df_b['Conciliado']].rename(columns={'Monto':'Monto_B', 'Concepto':'Concepto_B', ID_COL: f'{ID_COL}_B'}).assign(Estado='Pendiente - Extracto Bancario')
     
     final = pd.concat([rep1, rep2, rep3, rep4_c, rep4_b], ignore_index=True)
-    final['Fecha'] = final['Fecha'].fillna(final['Fecha_B']).fillna(final['Fecha_C'])
+    final['Fecha'] = pd.to_datetime(final['Fecha']).fillna(pd.to_datetime(final['Fecha_B'])).fillna(pd.to_datetime(final['Fecha_C']))
     return final.reindex(columns=get_columnas_finales()).sort_values('Fecha', na_position='last')
 
 # ==========================================================
-# --- EXCEL PREMIUM (DISEÑO FINAL SIN BORDES INFINITOS) ---
+# --- EXCEL PREMIUM (FORMATO FECHA Y BORDES DINÁMICOS) ---
 # ==========================================================
 def to_excel_premium(df, cliente=""):
     output = io.BytesIO()
@@ -124,6 +124,7 @@ def to_excel_premium(df, cliente=""):
     f_sub = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#4F46E5'})
     f_head = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
     f_num = workbook.add_format({'num_format': '#,##0.00', 'border': 1})
+    f_date = workbook.add_format({'num_format': 'dd/mm/yyyy', 'border': 1, 'align': 'center'})
     f_std = workbook.add_format({'border': 1})
     
     c_verde = workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100', 'border': 1})
@@ -154,14 +155,17 @@ def to_excel_premium(df, cliente=""):
     
     for row_num, row_data in enumerate(df.values):
         for col_num, cell_value in enumerate(row_data):
-            # SEGURIDAD DE DATOS: Convertir NaN a tipos seguros para XlsxWriter
-            if pd.isna(cell_value):
-                cell_value = 0.0 if col_num in [2, 3] else ""
+            if pd.isna(cell_value): cell_value = 0.0 if col_num in [2, 3] else ""
             
-            if col_num in [2, 3]: # Columnas de Monto
+            if col_num in [2, 3]: # Montos
                 ws1.write_number(row_num + 1, col_num, float(cell_value), f_num)
+            elif col_num == 1: # FECHA (Índice 1)
+                if cell_value != "":
+                    ws1.write_datetime(row_num + 1, col_num, cell_value, f_date)
+                else:
+                    ws1.write(row_num + 1, col_num, "", f_date)
             else:
-                ws1.write(row_num + 1, col_num, str(cell_value) if col_num != 1 else cell_value, f_std)
+                ws1.write(row_num + 1, col_num, str(cell_value), f_std)
 
     rows = len(df)
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'ID', 'format': c_verde})
@@ -170,7 +174,7 @@ def to_excel_premium(df, cliente=""):
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Contable', 'format': c_amarillo})
     ws1.conditional_format(1, 0, rows, 0, {'type': 'text', 'criteria': 'containing', 'value': 'Bancario', 'format': c_rojo})
     
-    ws1.set_column('A:A', 35); ws1.set_column('B:B', 12); ws1.set_column('E:H', 25)
+    ws1.set_column('A:A', 35); ws1.set_column('B:B', 15); ws1.set_column('E:H', 25)
 
     # --- HOJA 3: RESUMEN CONCEPTOS ---
     df_p = df[df['Estado'].str.contains('Pendiente')].copy()
@@ -190,7 +194,6 @@ def to_excel_premium(df, cliente=""):
         for row_num, row_data in enumerate(ag[columnas_ag].values):
             for col_num, cell_value in enumerate(row_data):
                 if pd.isna(cell_value): cell_value = 0.0 if col_num == 2 else ""
-                
                 if col_num == 2:
                     ws2.write_number(row_num + 1, col_num, float(cell_value), f_num)
                 else:
