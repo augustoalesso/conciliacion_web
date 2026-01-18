@@ -112,7 +112,7 @@ def ejecutar_conciliacion(df_c, df_b):
     return final.reindex(columns=get_columnas_finales()).sort_values('Fecha')
 
 # ==========================================================
-# --- EXCEL PREMIUM (DISEÑO FINAL) ---
+# --- EXCEL PREMIUM ---
 # ==========================================================
 def to_excel_premium(df, cliente=""):
     output = io.BytesIO()
@@ -208,13 +208,14 @@ if check_password():
 
     if st.button("▶️ EJECUTAR CONCILIACIÓN", type="primary"):
         if up_c and up_b:
-            dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
-            if dc is not None and db is not None:
-                res = ejecutar_conciliacion(dc, db)
-                st.success("✅ Auditoría completada con éxito")
-                st.download_button(
-                    label="⬇️ Descargar FinMatch_Reporte.xlsx",
-                    data=to_excel_premium(res, cliente),
-                    file_name="FinMatch_Reporte.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+            with st.spinner("Procesando auditoría..."):
+                dc, db = cargar_datos(up_c, 'Contable'), cargar_datos(up_b, 'Banco')
+                if dc is not None and db is not None:
+                    res = ejecutar_conciliacion(dc, db)
+                    st.success("✅ Auditoría completada con éxito")
+                    st.download_button(
+                        label="⬇️ Descargar FinMatch_Reporte.xlsx",
+                        data=to_excel_premium(res, cliente),
+                        file_name="FinMatch_Reporte.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
